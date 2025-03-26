@@ -1,46 +1,71 @@
-#ifndef WIDGE_COMMAND_H
-#define WIDGE_COMMAND_H
+#ifndef WIDGET_COMMAND_H
+#define WIDGET_COMMAND_H
+
 #include <iostream>
 #include <fstream>
 #include <cstdint>
 #include <vector>
 #include <cstring>
+#include <unordered_map>
 #include "pugixml.hpp"
 #include "a661_writer.h"
 #include "a661_consts.h"
 
-uint8_t parseEnum(const std::string& value) {
-    if (value == "A661_TRUE") return A661_TRUE;
-    else if (value == "A661_FALSE") return A661_FALSE;
-    else if (value == "A661_ABSENT") return A661_ABSENT;
-    else if (value == "A661_LEFT") return A661_LEFT;
-    else if (value == "A661_RIGHT") return A661_RIGHT;
-    else if (value == "A661_OPEN_DOWN") return A661_OPEN_DOWN;
-    else if (value == "A661_CENTER") return A661_CENTER;
-    else if (value == "A661_TOP") return A661_TOP;
-    else if (value == "A661_TRUE_WITH_VALIDATION") return A661_TRUE_WITH_VALIDATION;
-    else if (value == "A661_EDB_CHANGE_CONFIRMED") return A661_EDB_CHANGE_CONFIRMED;
-    else if (value == "A661_SIZE_LEFT_TO_RIGHT") return A661_SIZE_LEFT_TO_RIGHT;
-    else if (value == "A661_UNSELECTED") return A661_UNSELECTED;
-    else if (value == "A661_OPEN_DOWN") return A661_OPEN_DOWN;
-    else if (value == "A661_WRAP_BOTH") return A661_WRAP_BOTH;
+inline int getIntProp(const pugi::xml_node& node, const std::string& name, int defaultValue = 0) {
+    auto prop = node.child("model").find_child_by_attribute("intprop", "name", name.c_str());
+    return prop ? prop.text().as_int() : defaultValue;
 }
 
-class A661WidgeCommand {
+inline int getEnumProp(const pugi::xml_node& node, const std::string& name, int defaultValue = 0) {
+    auto prop = node.child("model").find_child_by_attribute("enumprop", "name", name.c_str());
+    return prop ? parseEnum(prop.text().as_string()) : defaultValue;
+}
+
+uint8_t parseEnum(const std::string& value) {
+    static const std::unordered_map<std::string, uint8_t> enumMap = {
+        {"A661_TRUE", A661_TRUE},
+        {"A661_FALSE", A661_FALSE},
+        {"A661_ABSENT", A661_ABSENT},
+        {"A661_LEFT", A661_LEFT},
+        {"A661_RIGHT", A661_RIGHT},
+        {"A661_OPEN_DOWN", A661_OPEN_DOWN},
+        {"A661_CENTER", A661_CENTER},
+        {"A661_TOP", A661_TOP},
+        {"A661_TRUE_WITH_VALIDATION", A661_TRUE_WITH_VALIDATION},
+        {"A661_EDB_CHANGE_CONFIRMED", A661_EDB_CHANGE_CONFIRMED},
+        {"A661_SIZE_LEFT_TO_RIGHT", A661_SIZE_LEFT_TO_RIGHT},
+        {"A661_UNSELECTED", A661_UNSELECTED},
+        {"A661_WRAP_BOTH", A661_WRAP_BOTH}
+    };
+    auto it = enumMap.find(value);
+    return it != enumMap.end() ? it->second : 0;
+}
+
+
+class A661WidgetCommand {
 public:
-    explicit A661WidgeCommand(int id, int pId) : widgeId(id), parentId(pId) {}
+    explicit A661WidgetCommand(int id, int pId) : widgetId(id), parentId(pId) {}
+    virtual ~A661WidgetCommand() = default;
 
-    uint16_t widgeId;
-    uint16_t parentId;
-
-    virtual ~A661WidgeCommand() = default;
     virtual void serialize(std::ofstream& outFile) const = 0;
     virtual size_t size() const = 0;
     virtual uint16_t getType() const = 0;
-    uint16_t getId() { return widgeId; }
+    uint16_t getId() const { return widgetId; }
+
+protected:
+    uint16_t widgetId;
+    uint16_t parentId;
+
+    void serializeCommonFields(std::ofstream& outFile) const {
+        writeUint16(outFile, this->getType());
+        writeUint16(outFile, widgetId);
+        writeUint16(outFile, parentId);
+    }
 };
 
-class TabbedPanelGroupCommand : public A661WidgeCommand {
+
+class TabbedPanelGroupCommand : public A661WidgetCommand {
+private:
     uint8_t enable;
     uint8_t visible;
     int32_t posX;
@@ -54,13 +79,11 @@ class TabbedPanelGroupCommand : public A661WidgeCommand {
 
 public:
     TabbedPanelGroupCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy, uint16_t ss, uint16_t atpId, uint8_t tp, uint8_t aisf)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss),
             activeTabbedPanelId(atpId), tabPosition(tp), automaticInsetSizeFlag(aisf){}
 
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -79,10 +102,27 @@ public:
     }
 
     uint16_t getType() const override { return A661_TABBED_PANEL_GROUP ; }  
+
+    static std::shared_ptr<TabbedPanelGroupCommand> fromXML(const pugi::xml_node& commandNode, uint16_t parentId) {
+        return std::make_shared<TabbedPanelGroupCommand>(
+            getIntProp(commandNode, "WidgetIdent"), 
+            parentId,
+            getEnumProp(commandNode, "Enable"),
+            getEnumProp(commandNode, "Visible"),
+            getIntProp(commandNode, "PosX"),
+            getIntProp(commandNode, "PosY"),
+            getIntProp(commandNode, "SizeX"),
+            getIntProp(commandNode, "SizeY"),
+            getIntProp(commandNode, "StyleSet"),
+            getIntProp(commandNode, "ActiveTabbedPanelID"),
+            getEnumProp(commandNode, "TabPosition"),
+            getEnumProp(commandNode, "AutomaticInsetSizeFlag")
+        );
+    }
 };
 
 //
-class TabbedPanelCommand : public A661WidgeCommand {
+class TabbedPanelCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -99,16 +139,14 @@ private:
 public:
     TabbedPanelCommand(int id, int parentId, uint8_t e, uint8_t v, uint16_t ss, uint16_t nfw, uint16_t mStrLen, uint16_t pRef, uint8_t pPos, uint8_t afm,
         uint8_t ali, uint32_t iS, std::string lstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), styleSet(ss), nextFocusedWidget(nfw), maxStringLength(mStrLen), pictureReference(pRef),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), styleSet(ss), nextFocusedWidget(nfw), maxStringLength(mStrLen), pictureReference(pRef),
         picturePosition(pPos), automicFocusMotion(afm), alignment(ali), insetSize(iS), labelString(lstr)
     {
         uint32_t strSz = labelString.size() + 1;
         alignStrSz = strSz % 4 == 0 ? strSz : 4 * (strSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeUint16(outFile, styleSet);
@@ -131,7 +169,7 @@ public:
 };
 
 //
-class GpRectangleCommand : public A661WidgeCommand {
+class GpRectangleCommand : public A661WidgetCommand {
 private:
     uint8_t anonymous;
     uint8_t visible;
@@ -147,12 +185,10 @@ private:
 public:
     GpRectangleCommand(int id, int parentId, uint8_t an, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy, uint16_t ss, uint16_t ci, 
         uint8_t bf, uint8_t fi, uint8_t h)
-        : A661WidgeCommand(id, parentId), anonymous(an), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss),
+        : A661WidgetCommand(id, parentId), anonymous(an), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss),
         colorIndex(ci), filled(bf), fillIndex(fi), halo(h) {}
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, anonymous);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -175,7 +211,7 @@ public:
 };
 
 // Label
-class LabelCommand : public A661WidgeCommand {
+class LabelCommand : public A661WidgetCommand {
 private:
     uint8_t anonymous;
     uint8_t visible;
@@ -195,16 +231,14 @@ private:
 public:
     LabelCommand(int id, int parentId, uint8_t an, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy, int32_t ra, uint16_t ss, 
         uint16_t maxStrLen, uint8_t ma, uint8_t f, uint16_t ci, uint8_t ali, std::string lstr)
-        : A661WidgeCommand(id, parentId), anonymous(an), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), rotationAngle(ra), styleSet(ss),
+        : A661WidgetCommand(id, parentId), anonymous(an), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), rotationAngle(ra), styleSet(ss),
         maxStringLength(maxStrLen), motionAllowed(ma), font(f), colorIndex(ci), alignment(ali) , labelString(lstr)
     {
         uint32_t strSz = labelString.size() + 1;
         alignStrSz = strSz % 4 == 0 ? strSz : 4 * (strSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, anonymous);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -229,7 +263,7 @@ public:
 };
 
 //ComboBox
-class ComboBoxCommand : public A661WidgeCommand {
+class ComboBoxCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -256,7 +290,7 @@ public:
     ComboBoxCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy, 
         uint32_t saW, uint32_t saH, uint16_t ss, uint16_t nfw, uint16_t maxNum, uint16_t nOfEntries, uint16_t se,
         uint16_t maxStrLen, uint16_t oe, uint8_t ali, uint8_t om, uint8_t afm)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), selectingAreaWidth(saW), 
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), selectingAreaWidth(saW), 
         selectingAreaHeight(saH), styleSet(ss), nextFocusedWidget(nfw), maxNumberOfEntries(maxNum),  numberOfEntries(nOfEntries), selectedEntry(se),
         maxStringLength(maxStrLen), openingEntry(oe), alignment(ali), openingMode(om), automicFocusMotion(afm), strTotalSz(0)
     {
@@ -268,9 +302,7 @@ public:
     }
     
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -310,7 +342,7 @@ public:
 };
 
 //PicturePushButton
-class PicturePushButtonCommand : public A661WidgeCommand{
+class PicturePushButtonCommand : public A661WidgetCommand{
 private:
     uint8_t enable;
     uint8_t visible;
@@ -331,16 +363,14 @@ public:
     PicturePushButtonCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t ss, uint16_t nfw, uint16_t pRef, uint16_t mStrLen, uint8_t pPos, uint8_t afm,
         uint8_t ali,  std::string lstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), 
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), 
          pictureReference(pRef), maxStringLength(mStrLen),picturePosition(pPos), automicFocusMotion(afm), alignment(ali), labelString(lstr)
     {
         uint32_t strSz = labelString.size()+1;
         alignStrSz = strSz % 4 == 0 ? strSz : 4 * (strSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -366,7 +396,7 @@ public:
 };
 
 //EditBoxText
-class EditBoxTextCommand : public A661WidgeCommand {
+class EditBoxTextCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -387,16 +417,14 @@ public:
     EditBoxTextCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t ss, uint16_t nfw, uint16_t scPos, uint16_t mStrLen, uint8_t pPos, uint8_t afm, uint8_t report,
         uint8_t ali, std::string lstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
         startCursorPos(scPos), maxStringLength(mStrLen), automicFocusMotion(afm), reportAllChanges(report), alignment(ali), labelString(lstr)
     {
         uint32_t strSz = labelString.size() + 1;
         alignStrSz = strSz % 4 == 0 ? strSz : 4 * (strSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -422,7 +450,7 @@ public:
 };
 
 //PushButton
-class PushButtonCommand : public A661WidgeCommand {
+class PushButtonCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -441,16 +469,14 @@ public:
     PushButtonCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t ss, uint16_t nfw, uint16_t mStrLen, uint8_t pPos, uint8_t afm,
         uint8_t ali, std::string lstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
          maxStringLength(mStrLen), automicFocusMotion(afm),  alignment(ali), labelString(lstr)
     {
         uint32_t strSz = labelString.size() + 1;
         alignStrSz = strSz % 4 == 0 ? strSz : 4 * (strSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -473,7 +499,7 @@ public:
 };
 
 //PopUpPanel
-class PopUpPanelCommand : public A661WidgeCommand {
+class PopUpPanelCommand : public A661WidgetCommand {
 private:
     uint8_t uaPositionFlag;
     uint8_t automaticClosure;
@@ -484,13 +510,11 @@ private:
     uint16_t styleSet;
 public:
     PopUpPanelCommand(int id, int parentId, uint8_t uaPosFlag, uint8_t ac, int32_t px, int32_t py, uint32_t sx, uint32_t sy,uint16_t ss)
-        : A661WidgeCommand(id, parentId), uaPositionFlag(uaPosFlag), automaticClosure(ac), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss)
+        : A661WidgetCommand(id, parentId), uaPositionFlag(uaPosFlag), automaticClosure(ac), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss)
     {
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, uaPositionFlag);
         writeUint8(outFile, automaticClosure);
         writeInt32(outFile, posX);
@@ -508,7 +532,7 @@ public:
     uint16_t getType() const override { return A661_POP_UP_PANEL; }
 };
 //ScrollList
-class ScrollListCommand : public A661WidgeCommand {
+class ScrollListCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -538,7 +562,7 @@ public:
     ScrollListCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
          uint16_t ss, uint16_t nfw, uint16_t maxNum, uint16_t nOfEntries, uint16_t se,
         uint16_t maxStrLen, uint16_t oe, uint16_t fv, uint8_t vs, uint8_t ali, uint8_t om, uint8_t afm)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), 
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), 
         maxNumberOfEntries(maxNum), numberOfEntries(nOfEntries), selectedEntry(se),
         maxStringLength(maxStrLen), firstAcessibleEntry(oe), firstVisibleEntry(fv), verticalScroll(vs), alignment(ali), flagReportVisibleEntry(om), automicFocusMotion(afm), strTotalSz(0)
     {
@@ -559,9 +583,7 @@ public:
     }
 
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -608,7 +630,7 @@ public:
     uint16_t getType() const override { return A661_SCROLL_LIST; }
 };
 //SizeToFitContainer
-class SizeToFitContainerCommand : public A661WidgeCommand {
+class SizeToFitContainerCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -622,12 +644,10 @@ private:
 public:
     SizeToFitContainerCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t num,  uint8_t size,uint32_t itemSp)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), numberOfVisibleChildren(num), 
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), numberOfVisibleChildren(num), 
         sizeToFitMode(size), itemSpacing(itemSp){}
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -647,7 +667,7 @@ public:
     uint16_t getType() const override { return A661_SIZE_TO_FIT_CONTAINER; }
 };
 //ToggleButton
-class ToggleButtonCommand : public A661WidgeCommand {
+class ToggleButtonCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -669,16 +689,14 @@ public:
     ToggleButtonCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t ss, uint16_t nfw, uint16_t mStrLen, uint8_t tState, uint8_t aFlag, uint8_t afm,
         uint8_t ali, std::string lstr, std::string alstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw),
          maxStringLength(mStrLen), toggleState(tState), alternateFlag(aFlag), automicFocusMotion(afm), alignment(ali), labelString(lstr), alternateLabelString(alstr)
     {
         uint32_t totalstrSz = labelString.size() + alternateLabelString.size() + 2;
         alignStrSz = totalstrSz % 4 == 0 ? totalstrSz : 4 * (totalstrSz / 4 + 1);
     }
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -705,7 +723,7 @@ public:
     uint16_t getType() const override { return A661_TOGGLE_BUTTON; }
 };
 //BasicContainer
-class BasicContainerCommand : public A661WidgeCommand {
+class BasicContainerCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -713,11 +731,9 @@ private:
     int32_t posY;
 public:
     BasicContainerCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py){}
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py){}
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -731,7 +747,7 @@ public:
     uint16_t getType() const override { return A661_BASIC_CONTAINER; }
 };
 //Symbol
-class SymbolCommand : public A661WidgeCommand {
+class SymbolCommand : public A661WidgetCommand {
 private:
     uint8_t motionAllowed;
     uint8_t visible;
@@ -743,11 +759,9 @@ private:
     uint8_t colorIndex;
 public:
     SymbolCommand(int id, int parentId, uint8_t an, uint8_t v, int32_t px, int32_t py, int32_t ra, uint16_t ss, uint16_t symbolRef, uint8_t ci)
-        : A661WidgeCommand(id, parentId), motionAllowed(an), visible(v), posX(px), posY(py), rotationAngle(ra), styleSet(ss), symbolReference(symbolRef),colorIndex(ci) {}
+        : A661WidgetCommand(id, parentId), motionAllowed(an), visible(v), posX(px), posY(py), rotationAngle(ra), styleSet(ss), symbolReference(symbolRef),colorIndex(ci) {}
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, motionAllowed);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -766,7 +780,7 @@ public:
     uint16_t getType() const override { return A661_SYMBOL; }
 };
 //PopUpMenuButton
-class PopUpMenuButtonCommand : public A661WidgeCommand {
+class PopUpMenuButtonCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -800,7 +814,7 @@ public:
     PopUpMenuButtonCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy,
         uint16_t ss, uint16_t nfw, int32_t ppX, int32_t ppY, uint32_t ppSizeX, uint32_t ppSizeY, uint16_t maxStrLen,uint16_t maxStrLenPopUp, uint16_t pr,
         uint8_t numE, uint8_t pp, uint8_t om, uint8_t ali, uint8_t afm, std::string lstr)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), popupPosX(ppX), popupPosY(ppY),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), styleSet(ss), nextFocusedWidget(nfw), popupPosX(ppX), popupPosY(ppY),
         popupSizeX(ppSizeX), popupSizeY(ppSizeY),maxStringLength(maxStrLen), maxStringLengthPopUp(maxStrLenPopUp), pictureReference(pr),
         numberOfEntries(numE), picturePosition(pp), openingMode(om), alignment(ali), automicFocusMotion(afm), labelString(lstr), alignSz(0)
     {
@@ -827,9 +841,7 @@ public:
     }
 
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -880,7 +892,7 @@ public:
 };
 
 //PagingContainer
-class PagingContainerCommand : public A661WidgeCommand {
+class PagingContainerCommand : public A661WidgetCommand {
 private:
     uint8_t enable;
     uint8_t visible;
@@ -900,12 +912,10 @@ private:
 public:
     PagingContainerCommand(int id, int parentId, uint8_t e, uint8_t v, int32_t px, int32_t py, uint32_t sx, uint32_t sy, uint8_t wt, uint8_t pp, uint16_t fPageDelta
         , uint16_t cpageDelta, uint16_t vc, uint8_t rvc,uint16_t ss, uint8_t an)
-        : A661WidgeCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), wrappingType(wt), pagingControlPosition(pp),
+        : A661WidgetCommand(id, parentId), enable(e), visible(v), posX(px), posY(py), sizeX(sx), sizeY(sy), wrappingType(wt), pagingControlPosition(pp),
         finePageDelta(fPageDelta), coarsePageDelta(cpageDelta), visibleChild(vc), reportVisibleChild(rvc), styleSet(ss), anonymous(an){}
     void serialize(std::ofstream& outFile) const override {
-        writeUint16(outFile, this->getType());
-        writeUint16(outFile, widgeId);
-        writeUint16(outFile, parentId);
+        serializeCommonFields(outFile);
         writeUint8(outFile, enable);
         writeUint8(outFile, visible);
         writeInt32(outFile, posX);
@@ -930,7 +940,7 @@ public:
 };
 
 
-static std::shared_ptr<A661WidgeCommand> createWidgeCommandFromXML(const pugi::xml_node& commandNode, uint16_t parentId = 0) {
+static std::shared_ptr<A661WidgetCommand> createWidgeCommandFromXML(const pugi::xml_node& commandNode, uint16_t parentId = 0) {
     std::string type = commandNode.attribute("type").as_string();
     if (type == "TabbedPanelGroup") {
         uint16_t widgeId = commandNode.child("model").find_child_by_attribute("intprop", "name", "WidgetIdent").text().as_int();
